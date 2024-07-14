@@ -19,9 +19,8 @@ This document contains the specification of the [`SSV`](https://github.com/bloxa
       - [State](#state)
         - [Partial Signature Container](#partial-signature-container)
     - [Proposer Runner](#proposer-runner)
-    - [Attester Runner](#attester-runner)
+    - [Committee Runner](#committee-runner)
     - [Aggregator Runner](#aggregator-runner)
-    - [Sync Committee Runner](#sync-committee-runner)
     - [Sync Committee Aggregator Runner](#sync-committee-aggregator-runner)
     - [Validator Registration Runner](#validator-registration-runner)
   - [Validator](#validator)
@@ -190,38 +189,43 @@ flowchart LR
 ```
 
 
-### Attester Runner
+### Committee Runner
 
-For the `attestation duty`, the validator should construct an [AttestationData](https://github.com/ethereum/consensus-specs/blob/dev/specs/phase0/beacon-chain.md#attestationdata), which is composed by:
+This runner creates several beacon objects from one consensus.
+For the `attestation duty` and `sync committee duty`, the validator should construct an [AttestationData](https://github.com/ethereum/consensus-specs/blob/dev/specs/phase0/beacon-chain.md#attestationdata), which is composed by:
 - a slot,
 - committee index,
 - a beacon block root (for the LMD GHOST vote)
 - a source and target checkpoint (for the FFG vote)
 
-
-and broadcast an [Attestation](https://github.com/ethereum/consensus-specs/blob/dev/specs/phase0/beacon-chain.md#attestation) to the committee subnet.
+From the *AttestationData* it can create an [Attestation](https://github.com/ethereum/consensus-specs/blob/dev/specs/phase0/beacon-chain.md#attestation) and [SyncCommitteeMessage](https://github.com/ethereum/consensus-specs/blob/dev/specs/altair/validator.md#synccommitteemessage).
 
 The operator can rely on the [Beacon node](#beacon-node) to get the *AttestationData* object.
 
 The overall steps are:
 1. Get an *AttestationData* from the Beacon node.
 2. Reach a consensus on the duty and the attestation data.
-3. Construct the validator signature for the Attestation object and send it back to the Beacon node.
+3. Construct the validator signature for the Attestation and Sync Committee objects and send it back to the Beacon node.
 
 ```mermaid
 ---
-title: Attester steps
+title:  steps
 ---
 %%{ init: { 'flowchart': { 'curve': 'linear' } } }%%
 flowchart LR
         attestationData(Get AttestationData)
         Consensus(Consensus)
-        attestation(Construct Attestation Signature)
-        send(Send Attestation to Beacon Node)
+        attestation(Construct Attestations Signatures)
+        SyncCommittee(Construct Sync Committees Signatures)
+        send(Send Attestations to Beacon Node)
+        sendSync(Send Sync Committees to Beacon Node)
+        
 
         attestationData-->Consensus
         Consensus-->attestation
+        Consensus-->SyncCommittee
         attestation-->send
+        SyncCommittee-->sendSync
 
 ```
 
@@ -256,40 +260,6 @@ flowchart LR
         consensus-->signedAggregateAndProof
         signedAggregateAndProof-->send
 ```
-
-### Sync Committee Runner
-
-On a `sync committee` duty, the validator should construct a [SyncCommitteeMessage](https://github.com/ethereum/consensus-specs/blob/dev/specs/altair/validator.md#synccommitteemessage) for the previous slot and broadcast it to the sync committee subnet. The message is composed by:
-- the slot,
-- the beacon block root,
-- the validator index,
-- the validator signature over the block root.
-
-The [Beacon node](#beacon-node) provides the beacon block root. Thus, the overall steps are:
-1. Get block root from the Beacon node.
-2. Do consensus on the duty and the data.
-3. Construct the validator signature over the block root.
-4. Creates the SyncCommitteeMessage and sends it to the Beacon node.
-
-```mermaid
----
-title: Sync committee steps
----
-%%{ init: { 'flowchart': { 'curve': 'linear' } } }%%
-flowchart LR
-
-        blockRoot(Get block root)
-        consensus(Consensus)
-        signature(Construct signature over root)
-        message(Construct the SyncCommitteeMessage)
-        send(send it to the Beacon Node)
-
-        blockRoot-->consensus
-        consensus-->signature
-        signature-->message
-        message-->send
-```
-
 
 
 ### Sync Committee Aggregator Runner
