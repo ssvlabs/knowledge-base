@@ -111,7 +111,8 @@ The `Runner interface` establishes every method that a runner of any type should
 
 The `BaseRunner` structure represents a common ground for all different types of runners. It's comprised by:
 - a [state](#state),
-- a *share* that contains information such as its operator ID, its share key, and the set of operators
+- *share* that contains information about the validators the node runs, and their committees.
+- *committee member* that contains infomration about the operator itself seperated from the validators it runs.
 - a QBFT controller to manage consensus instances,
 - the Beacon network, its Beacon role and the highest decided slot number.
 
