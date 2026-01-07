@@ -521,7 +521,7 @@ func (mv *MessageValidation) ValidateSemantics(peerID peer.ID, signedSSVMessage 
 	}
 }
 
-func isCommitteeRole(role) bool {
+func isCommitteeRole(role types.RunnerRole) bool {
 	return role == types.RoleCommittee || role == types.RoleAggregatorCommittee
 }
 ```
@@ -806,7 +806,7 @@ func (mv *MessageValidation) ValidateQBFTMessageByDutyLogic(peerID peer.ID, sign
 
 	// Rule: valid number of duties per epoch:
 	// - 2 for voluntary exit and validator registration
-	// - 2*V for Committee and Aggrgeator Committee duty (where V is the number of validators in the cluster) (if no validator is doing sync committee in this epoch)
+	// - 2*V for Committee and Aggregator Committee duty (where V is the number of validators in the cluster) (if no validator is doing sync committee in this epoch)
 	// - else, accept
 	if !mv.ValidNumberOfDutiesPerEpoch(peerID, signedSSVMessage.SSVMessage.MsgID, phase0.Slot(qbftMessage.Height)) {
 		return ErrTooManyDutiesPerEpoch
@@ -840,16 +840,16 @@ func (mv *MessageValidation) ValidProposerDuty() error {
 
 #### Semantics
 
-|        Verification        |                Error                | Classification | Explanation                                                                                                                                                                                                                                                                                                                         |
-| -------------------------- | ----------------------------------- | -------------- |-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Verification               |                Error                | Classification | Explanation                                                                                                                                                                                                                                                                                                                         |
+|----------------------------| ----------------------------------- | -------------- |-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | More than one signer       | ErrPartialSigOneSigner              | Reject         | Must have only 1 signer.                                                                                                                                                                                                                                                                                                            |
-| Unexpected FullData         | ErrFullDataNotInConsensusMessage    | Reject         | Must not have FullData.                                                                                                                                                                                                                                                                                                             |
+| Unexpected FullData        | ErrFullDataNotInConsensusMessage    | Reject         | Must not have FullData.                                                                                                                                                                                                                                                                                                             |
 | Unknown type               | ErrInvalidPartialSignatureType      | Reject         | Type not known.                                                                                                                                                                                                                                                                                                                     |
 | Wrong type for role        | ErrPartialSignatureTypeRoleMismatch | Reject         | Type must match role:<br> PostConsensusPartialSig for Committee,<br> RandaoPartialSig or PostConsensusPartialSig for Proposer,<br> AggregatorCommitteePartialSig or PostConsensusPartialSig for AggregatorCommittee,<br> ValidatorRegistrationPartialSig for Validator Registration,<br> VoluntaryExitPartialSig for Voluntary Exit |
-| No PartialSignatureMessage                 | ErrNoPartialSignatureMessages | Reject | Message must have at least one PartialSignatureMessage.                                                                                                                                                                                                                                                                             |
-| Wrong BLS Signature Size                   | ErrWrongBLSSignatureSize      | Reject | $\forall i$ PartialSignatureMessages.Message[i].Signature must have the correct length.                                                                                                                                                                                                                                             |
-| Inconsistent signer                        | ErrInconsistentSigners        | Reject | $\forall i$ PartialSignatureMessages.Message[i].Signer must be the same as the<br> SignedSSVMessage.OperatorIDs[i].                                                                                                                                                                                                                 |
-| Validtor's index mismatch                  | ErrValidatorIndexMismatch     | Ignore | $\forall i$ PartialSignatureMessages.Message[i].ValidatorIndex must belong to SSVMessage.SenderID().                                                                                                                                                                                                                                |
+| No PartialSignatureMessage | ErrNoPartialSignatureMessages | Reject | Message must have at least one PartialSignatureMessage.                                                                                                                                                                                                                                                                             |
+| Wrong BLS Signature Size   | ErrWrongBLSSignatureSize      | Reject | $\forall i$ PartialSignatureMessages.Message[i].Signature must have the correct length.                                                                                                                                                                                                                                             |
+| Inconsistent signer        | ErrInconsistentSigners        | Reject | $\forall i$ PartialSignatureMessages.Message[i].Signer must be the same as the<br> SignedSSVMessage.OperatorIDs[i].                                                                                                                                                                                                                 |
+| Validator's index mismatch | ErrValidatorIndexMismatch     | Ignore | $\forall i$ PartialSignatureMessages.Message[i].ValidatorIndex must belong to SSVMessage.SenderID().                                                                                                                                                                                                                                |
 
 ```go
 
@@ -990,7 +990,7 @@ func (mv *MessageValidation) ValidatePartialSigMessagesByDutyLogic(peerID peer.I
 	msgRole := signedSSVMessage.SSVMessage.MsgID.GetRoleType()
 
 	// Rule: Height must not be "old". I.e., signer must not have already advanced to a later slot.
-	if isCommitteeRole(msgRole) { // Rule only for validator runners
+	if !isCommitteeRole(msgRole) { // Rule only for validator runners
 		if !mv.MessageFromOldSlot(peerID, signedSSVMessage.SSVMessage.MsgID, partialSignatureMessages.Slot) {
 			return ErrSlotAlreadyAdvanced
 		}
@@ -1030,7 +1030,7 @@ func (mv *MessageValidation) ValidatePartialSigMessagesByDutyLogic(peerID peer.I
 
 	if isCommitteeRole(msgRole) {
         
-		if msgRole == types.RoleCommmittee {
+		if msgRole == types.RoleCommittee {
             // Rule: The number of signatures must be <= min(2*V, V + SYNC_COMMITTEE_SIZE) where V is the number of validators assigned to the cluster
             if !mv.ValidNumberOfSignaturesForCommitteeDuty(signedSSVMessage.SSVMessage.MsgID.GetSenderID(), &partialSignatureMessages) {
                 return ErrTooManyPartialSignatureMessages
@@ -1045,7 +1045,7 @@ func (mv *MessageValidation) ValidatePartialSigMessagesByDutyLogic(peerID peer.I
         }
 
 		// Rule: a ValidatorIndex can't appear more than 2 (resp. 5) times in the []*PartialSignatureMessage list for role Committee (resp. AggregatorCommittee)
-		if !mv.TooManyEqualValidatorOccurrence(&partialSignatureMessages, msgRole) {
+		if mv.TooManyEqualValidatorOccurrence(&partialSignatureMessages, msgRole) {
 			return ErrTooManyEqualValidatorIndexInPartialSignatures
 		}
 	} else {
