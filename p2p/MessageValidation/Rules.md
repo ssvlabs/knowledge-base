@@ -120,7 +120,7 @@ var (
 
 	ErrPartialSigOneSigner              		= Error{text: "partial signature message with len(signers) != 1", reject: true}
 	ErrTooManyPartialSignatureMessages  		= Error{text: "too many signatures for cluster in partial signature message"}
-	ErrTripleValidatorIndexInPartialSignatures  = Error{text: "validator index appear 3 times in partial signature message", reject: true}
+	ErrTooManyEqualValidatorIndexInPartialSignatures  = Error{text: "validator index appear 3 times in partial signature message", reject: true}
 	ErrNoPartialSignatureMessages       		= Error{text: "no partial signature messages", reject: true}
 	ErrInconsistentSigners              		= Error{text: "inconsistent signers", reject: true}
 	ErrValidatorIndexMismatch           		= Error{text: "validator index mismatch"}
@@ -140,14 +140,13 @@ The main structure is the `MessageValidation` structure which has a `ValidatePub
 ```go
 
 const (
-	MaxMsgSize                               = 4945164
-	maxConsensusMsgSize                      = 722412
-	maxPartialSignatureMsgSize               = 144020
+	MaxMsgSize                               = 9114816
+	maxConsensusMsgSize                      = 722480
+	maxPartialSignatureMsgSize               = 727000
 	maxSSVMessageDataSize                    = max(maxConsensusMsgSize, maxPartialSignatureMsgSize)
 	PartialSignatureSize                     = 48
 	MessageSignatureSize                     = 256
 	SyncCommitteeSize                        = 512
-	MaxSignaturesInSyncCommitteeContribution = 13
 )
 
 type MessageValidation struct {
@@ -423,19 +422,19 @@ func (mv *MessageValidation) ValidatePubSubMessage(pmsg *pubsub.Message) error {
 ### Semantics General Rules
 
 
-|     Verification     |           Error           | Classification |                              Explanation                              |
-| -------------------- | ------------------------- | -------------- | --------------------------------------------------------------------- |
-| Signers in committee | ErrSignerNotInCommittee   | Reject         | Signers must belong to validator's or CommitteeID's committee.        |
-| Different Domain     | ErrWrongDomain            | Ignore         | MsgID.Domain is different than self domain.                           |
-| Invalid Role         | ErrInvalidRole            | Reject         | MsgID.Role is not known.                                              |
-| Validator exists     | ErrUnknownValidator       | Ignore         | If MsgID.SenderID is a validator, it must exist.                      |
-| Active Validator ID  | ErrValidatorNotAttesting  | Ignore         | If MsgID.SenderID is a validator, it must be active active validator. |
-| Validator Liquidated | ErrValidatorLiquidated    | Ignore         | If MsgID.SenderID is a validator, it must not be liquidated.          |
-| CommitteeID exists   | ErrNonExistentCommitteeID | Ignore         | If MsgID.SenderID is a committee, it must exist.                      |
-| Wrong topic          | ErrIncorrectTopic         | Ignore         | The message should be sent in the correct topic                       |
-| Event Message        | ErrEventMessage           | Reject         | MsgType can't be of event message.                                    |
-| DKG Message          | ErrDKGMessage             | Reject         | MsgType can't be of DKG message.                                      |
-| Unknown MsgType      | ErrUnknownSSVMessageType  | Reject         | MsgType is not known.                                                 |
+|     Verification     |           Error           | Classification | Explanation                                                                                                                                |
+| -------------------- | ------------------------- | -------------- |--------------------------------------------------------------------------------------------------------------------------------------------|
+| Signers in committee | ErrSignerNotInCommittee   | Reject         | Signers must belong to validator's or CommitteeID's committee.                                                                             |
+| Different Domain     | ErrWrongDomain            | Ignore         | MsgID.Domain is different than self domain.                                                                                                |
+| Invalid Role         | ErrInvalidRole            | Reject         | MsgID.Role is wrong (not `RoleCommittee`, `RoleProposer`, `RoleValidatorRegistration`, `RoleVoluntaryExit`, or `RoleAggregatorCommittee`). |
+| Validator exists     | ErrUnknownValidator       | Ignore         | If MsgID.SenderID is a validator, it must exist.                                                                                           |
+| Active Validator ID  | ErrValidatorNotAttesting  | Ignore         | If MsgID.SenderID is a validator, it must be active active validator.                                                                      |
+| Validator Liquidated | ErrValidatorLiquidated    | Ignore         | If MsgID.SenderID is a validator, it must not be liquidated.                                                                               |
+| CommitteeID exists   | ErrNonExistentCommitteeID | Ignore         | If MsgID.SenderID is a committee, it must exist.                                                                                           |
+| Wrong topic          | ErrIncorrectTopic         | Ignore         | The message should be sent in the correct topic                                                                                            |
+| Event Message        | ErrEventMessage           | Reject         | MsgType can't be of event message.                                                                                                         |
+| DKG Message          | ErrDKGMessage             | Reject         | MsgType can't be of DKG message.                                                                                                           |
+| Unknown MsgType      | ErrUnknownSSVMessageType  | Reject         | MsgType is not known.                                                                                                                      |
 
 ```go
 
@@ -477,7 +476,7 @@ func (mv *MessageValidation) ValidateSemantics(peerID peer.ID, signedSSVMessage 
 	}
 
 	senderID := signedSSVMessage.SSVMessage.MsgID.GetSenderID()
-	if role != types.RoleCommittee {
+	if !isCommitteeRole(role) {
 		validatorPK := senderID
 
 		// Rule: Validator does not exist
@@ -520,6 +519,10 @@ func (mv *MessageValidation) ValidateSemantics(peerID peer.ID, signedSSVMessage 
 		// Unknown message type
 		return ErrUnknownSSVMessageType
 	}
+}
+
+func isCommitteeRole(role) bool {
+	return role == types.RoleCommittee || role == types.RoleAggregatorCommittee
 }
 ```
 
@@ -732,14 +735,14 @@ func (mv *MessageValidation) ValidateQBFTLogic(peerID peer.ID, signedSSVMessage 
 
 #### Duty Logic
 
-|       Verification        |             Error             | Classification |                                                                                             Explanation                                                                                              |
-| ------------------------- | ----------------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Already advanced slot     | ErrSlotAlreadyAdvanced        | Ignore         | (Non-committee roles) Signer already advanced to later slot.                                                                                                                                         |
-| Invalid role for consensus  | ErrUnexpectedConsensusMessage | Reject         | SSVMessage.MsgID.Role must not be ValidatorRegistration or VoluntaryExit.                                                                                                                            |
-| No beacon duty            | ErrNoDuty                     | Ignore         | If Proposal or Sync committee contribution duty, check if duty exists with beacon node.                                                                                                              |
-| Slot not in time for role | ErrEarlySlotMessage or ErrLateSlotMessage              | Ignore         | Current time must be between duty's starting time and<br> +34 (committee and aggregator) or +3 (else) slots.                                                                                         |
-| Too many duties per epoch | ErrTooManyDutiesPerEpoch      | Ignore         | If role is either aggregator, voluntary exit and validator registration,<br> it's allowed 2 duties per epoch. Else if committee,<br> 2*V (if no validator is doing sync committee).<br> Else accept. |
-| Valid round for role      | ErrRoundTooHigh               | Reject         | For committee and aggregation, round can go up to 12. Else, it can go up to 6.                                                                                                                       |
+|       Verification        |             Error             | Classification | Explanation                                                                                                                                                                                                      |
+| ------------------------- | ----------------------------- | -------------- |------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Already advanced slot     | ErrSlotAlreadyAdvanced        | Ignore         | (Non-committee roles) Signer already advanced to later slot.                                                                                                                                                     |
+| Invalid role for consensus  | ErrUnexpectedConsensusMessage | Reject         | SSVMessage.MsgID.Role must not be ValidatorRegistration or VoluntaryExit.                                                                                                                                        |
+| No beacon duty            | ErrNoDuty                     | Ignore         | If Proposal duty, check if duty exists with beacon node.                                                                                                                                                         |
+| Slot not in time for role | ErrEarlySlotMessage or ErrLateSlotMessage              | Ignore         | Current time must be between duty's starting time and<br> +34 (committee and aggregator committee) or +3 (else) slots.                                                                                           |
+| Too many duties per epoch | ErrTooManyDutiesPerEpoch      | Ignore         | If role is either voluntary exit and validator registration,<br> it's allowed 2 duties per epoch. Else if committee or aggregator committee,<br> 2*V (if no validator is doing sync committee).<br> Else accept. |
+| Valid round for role      | ErrRoundTooHigh               | Reject         | For committee and aggregator committee, round can go up to 12. Else, it can go up to 6.                                                                                                                          |
 
 
 ```go
@@ -757,7 +760,7 @@ func (mv *MessageValidation) ValidateQBFTMessageByDutyLogic(peerID peer.ID, sign
 			}
 			type SSVMessage struct {
 				MsgType MsgType
-				MsgID   MessageID -> Role must have consensus, Must be assigned to duty if role is Proposal or Sync Committee Aggregator
+				MsgID   MessageID -> Role must have consensus, Must be assigned to duty if role is Proposal
 				Data 	[]byte
 			}
 			type Message struct {
@@ -777,7 +780,7 @@ func (mv *MessageValidation) ValidateQBFTMessageByDutyLogic(peerID peer.ID, sign
 	_ = qbftMessage.Decode(signedSSVMessage.SSVMessage.Data)
 
 	// Rule: Height must not be "old". I.e., signer must not have already advanced to a later slot.
-	if signedSSVMessage.SSVMessage.MsgID.GetRoleType() != types.RoleCommittee { // Rule only for validator runners
+	if !isCommitteeRole(signedSSVMessage.SSVMessage.MsgID.GetRoleType()) { // Rule only for validator runners
 		if !mv.MessageFromOldSlot(peerID, signedSSVMessage.SSVMessage.MsgID, qbftMessage.Height) {
 			return ErrSlotAlreadyAdvanced
 		}
@@ -788,8 +791,8 @@ func (mv *MessageValidation) ValidateQBFTMessageByDutyLogic(peerID peer.ID, sign
 		return ErrUnexpectedConsensusMessage
 	}
 
-    // Rule: For proposal and sync committee aggregation duties, we check if the validator is assigned to it
-    if err := mv.ValidBeaconDuty(signedSSVMessage.SSVMessage.MsgID.GetSenderID(), signedSSVMessage.SSVMessage.MsgID.GetRoleType(), phase0.Slot(qbftMessage.Height)); err != nil {
+    // Rule: For proposer duty, we check if the validator is assigned to it
+    if err := mv.ValidProposerDuty(signedSSVMessage.SSVMessage.MsgID.GetSenderID(), signedSSVMessage.SSVMessage.MsgID.GetRoleType(), phase0.Slot(qbftMessage.Height)); err != nil {
 		return err
     }
 
@@ -802,15 +805,15 @@ func (mv *MessageValidation) ValidateQBFTMessageByDutyLogic(peerID peer.ID, sign
 	}
 
 	// Rule: valid number of duties per epoch:
-	// - 2 for aggregation, voluntary exit and validator registration
-	// - 2*V for Committee duty (where V is the number of validators in the cluster) (if no validator is doing sync committee in this epoch)
+	// - 2 for voluntary exit and validator registration
+	// - 2*V for Committee and Aggrgeator Committee duty (where V is the number of validators in the cluster) (if no validator is doing sync committee in this epoch)
 	// - else, accept
 	if !mv.ValidNumberOfDutiesPerEpoch(peerID, signedSSVMessage.SSVMessage.MsgID, phase0.Slot(qbftMessage.Height)) {
 		return ErrTooManyDutiesPerEpoch
 	}
 
 	// Rule: Round cut-offs for roles:
-	// - 12 (committee and aggregation)
+	// - 12 (committee and aggregator committee)
 	// - 6 (other types)
 	if !mv.ValidRoundForRole(qbftMessage.Round, signedSSVMessage.SSVMessage.MsgID.GetRoleType()) {
 		return ErrRoundTooHigh
@@ -819,18 +822,11 @@ func (mv *MessageValidation) ValidateQBFTMessageByDutyLogic(peerID peer.ID, sign
 	return nil
 }
 
-func (mv *MessageValidation) ValidBeaconDuty() error {
+func (mv *MessageValidation) ValidProposerDuty() error {
 
 	// Rule: For a proposal duty message, we check if the validator is assigned to it
 	if signedSSVMessage.SSVMessage.MsgID.GetRoleType() == types.RoleProposer {
 		if !mv.HasProposerDuty(signedSSVMessage.SSVMessage.MsgID.GetSenderID(), phase0.Slot(qbftMessage.Height)) {
-			return ErrNoDuty
-		}
-	}
-
-	// Rule: For a sync committee aggregation duty message, we check if the validator is assigned to it
-	if signedSSVMessage.SSVMessage.MsgID.GetRoleType() == types.RoleSyncCommitteeContribution {
-		if !mv.HasSyncCommitteeDuty(signedSSVMessage.SSVMessage.MsgID.GetSenderID(), phase0.Slot(qbftMessage.Height)) {
 			return ErrNoDuty
 		}
 	}
@@ -844,16 +840,16 @@ func (mv *MessageValidation) ValidBeaconDuty() error {
 
 #### Semantics
 
-|        Verification        |                Error                | Classification | Explanation |
-| -------------------------- | ----------------------------------- | -------------- | ----------- |
-| More than one signer       | ErrPartialSigOneSigner              | Reject         | Must have only 1 signer.            |
-| Unexpected FullData         | ErrFullDataNotInConsensusMessage    | Reject         | Must not have FullData.            |
-| Unknown type               | ErrInvalidPartialSignatureType      | Reject         | Type not known.            |
-| Wrong type for role        | ErrPartialSignatureTypeRoleMismatch | Reject         | Type must match role:<br> PostConsensusPartialSig for Committee,<br> RandaoPartialSig or PostConsensusPartialSig for Proposer,<br> SelectionProofPartialSig or PostConsensusPartialSig for Aggregator,<br> SelectionProofPartialSig or PostConsensusPartialSig for Sync committee contribution,<br> ValidatorRegistrationPartialSig for Validator Registration,<br> VoluntaryExitPartialSig for Voluntary Exit |
-| No PartialSignatureMessage                 | ErrNoPartialSignatureMessages | Reject | Message must have at least one PartialSignatureMessage. |
-| Wrong BLS Signature Size                   | ErrWrongBLSSignatureSize      | Reject | $\forall i$ PartialSignatureMessages.Message[i].Signature must have the correct length. |
-| Inconsistent signer                        | ErrInconsistentSigners        | Reject | $\forall i$ PartialSignatureMessages.Message[i].Signer must be the same as the<br> SignedSSVMessage.OperatorIDs[i]. |
-| Validtor's index mismatch                  | ErrValidatorIndexMismatch     | Ignore | $\forall i$ PartialSignatureMessages.Message[i].ValidatorIndex must belong to SSVMessage.SenderID(). |
+|        Verification        |                Error                | Classification | Explanation                                                                                                                                                                                                                                                                                                                         |
+| -------------------------- | ----------------------------------- | -------------- |-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| More than one signer       | ErrPartialSigOneSigner              | Reject         | Must have only 1 signer.                                                                                                                                                                                                                                                                                                            |
+| Unexpected FullData         | ErrFullDataNotInConsensusMessage    | Reject         | Must not have FullData.                                                                                                                                                                                                                                                                                                             |
+| Unknown type               | ErrInvalidPartialSignatureType      | Reject         | Type not known.                                                                                                                                                                                                                                                                                                                     |
+| Wrong type for role        | ErrPartialSignatureTypeRoleMismatch | Reject         | Type must match role:<br> PostConsensusPartialSig for Committee,<br> RandaoPartialSig or PostConsensusPartialSig for Proposer,<br> AggregatorCommitteePartialSig or PostConsensusPartialSig for AggregatorCommittee,<br> ValidatorRegistrationPartialSig for Validator Registration,<br> VoluntaryExitPartialSig for Voluntary Exit |
+| No PartialSignatureMessage                 | ErrNoPartialSignatureMessages | Reject | Message must have at least one PartialSignatureMessage.                                                                                                                                                                                                                                                                             |
+| Wrong BLS Signature Size                   | ErrWrongBLSSignatureSize      | Reject | $\forall i$ PartialSignatureMessages.Message[i].Signature must have the correct length.                                                                                                                                                                                                                                             |
+| Inconsistent signer                        | ErrInconsistentSigners        | Reject | $\forall i$ PartialSignatureMessages.Message[i].Signer must be the same as the<br> SignedSSVMessage.OperatorIDs[i].                                                                                                                                                                                                                 |
+| Validtor's index mismatch                  | ErrValidatorIndexMismatch     | Ignore | $\forall i$ PartialSignatureMessages.Message[i].ValidatorIndex must belong to SSVMessage.SenderID().                                                                                                                                                                                                                                |
 
 ```go
 
@@ -911,8 +907,7 @@ func (mv *MessageValidation) ValidatePartialSignatureMessageSemantics(peerID pee
 	// Rule: Partial signature type must match expected type:
 	// - PostConsensusPartialSig, for Committee duty
 	// - RandaoPartialSig or PostConsensusPartialSig for Proposer
-	// - SelectionProofPartialSig or PostConsensusPartialSig for Aggregator
-	// - SelectionProofPartialSig or PostConsensusPartialSig for Sync committee contribution
+	// - AggregatorCommitteePartialSig or PostConsensusPartialSig for AggregatorCommittee
 	// - ValidatorRegistrationPartialSig for Validator Registration
 	// - VoluntaryExitPartialSig for Voluntary Exit
 	if !mv.ExpectedPartialSignatureTypeForRole(partialSignatureMessages.Type, signedSSVMessage.SSVMessage.MsgID) {
@@ -945,15 +940,15 @@ func (mv *MessageValidation) ValidatePartialSignatureMessageSemantics(peerID pee
 
 #### Duty Logic
 
-|         Verification         |          Error           | Classification |                                                                                             Explanation                                                                                              |
-| ---------------------------- | ------------------------ | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Already advanced slot        | ErrSlotAlreadyAdvanced   | Ignore         | (Non-committee roles) Signer already advanced to later slot.                                                                                                                                         |
-| No beacon duty               | ErrNoDuty                | Ignore         | If Proposal or Sync committee contribution duty, check if duty exists with beacon node.                                                                                                              |
-| Invalid signature type count | ErrInvalidPartialSignatureTypeCount                | Reject         | It's allow only:<br> 1 PostConsensusPartialSig, for Committee duty,<br> 1 RandaoPartialSig and 1 PostConsensusPartialSig for Proposer,<br> 1 SelectionProofPartialSig and 1 PostConsensusPartialSig for Aggregator,<br> 1 SelectionProofPartialSig and 1 PostConsensusPartialSig for Sync committee contribution,<br> 1 ValidatorRegistrationPartialSig for Validator Registration,<br> 1 VoluntaryExitPartialSig for Voluntary Exit. |
-| Slot not in time for role    | ErrEarlySlotMessage or ErrLateSlotMessage         | Ignore         | Current time must be between duty's starting time and<br> +34 (committee and aggregator) or +3 (else) slots.                                                                                         |
-| Too many duties per epoch    | ErrTooManyDutiesPerEpoch | Ignore         | If role is either aggregator, voluntary exit and validator registration,<br> it's allowed 2 duties per epoch. Else if committee,<br> 2*V (if no validator is doing sync committee).<br> Else accept. |
-| Too many partial signatures  | ErrTooManyPartialSignatureMessages                | Reject         | For the committee role, it's allowed $min(2*V, V + $ SYNC_COMMITTEE_SIZE $)$ <br> where $V$ is the number of committee's validatos.<br> For sync committee contribution, it's allowed 13.<br> Else, only 1.  |
-| Triple validator index       | ErrTripleValidatorIndexInPartialSignatures                | Reject         | A validator index can not be associated to more than 2 signatures. |
+|         Verification         |          Error           | Classification | Explanation                                                                                                                                                                                                                                                                                                                                           |
+| ---------------------------- | ------------------------ | -------------- |-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Already advanced slot        | ErrSlotAlreadyAdvanced   | Ignore         | (Non-committee roles) Signer already advanced to later slot.                                                                                                                                                                                                                                                                                          |
+| No beacon duty               | ErrNoDuty                | Ignore         | If Proposal duty, check if duty exists with beacon node.                                                                                                                                                                                                                                                                                              |
+| Invalid signature type count | ErrInvalidPartialSignatureTypeCount                | Reject         | It's allow only:<br> 1 PostConsensusPartialSig, for Committee duty,<br> 1 RandaoPartialSig and 1 PostConsensusPartialSig for Proposer,<br> 1 AggregatorCommitteePartialSig and 1 PostConsensusPartialSig for AggregatorCommittee,<br> 1 ValidatorRegistrationPartialSig for Validator Registration,<br> 1 VoluntaryExitPartialSig for Voluntary Exit. |
+| Slot not in time for role    | ErrEarlySlotMessage or ErrLateSlotMessage         | Ignore         | Current time must be between duty's starting time and<br> +34 (committee and aggregator committee) or +3 (else) slots.                                                                                                                                                                                                                                |
+| Too many duties per epoch    | ErrTooManyDutiesPerEpoch | Ignore         | If role is either aggregator, voluntary exit and validator registration,<br> it's allowed 2 duties per epoch. Else if committee or aggregator committee,<br> 2*V (if no validator is doing sync committee).<br> Else accept.                                                                                                                          |
+| Too many partial signatures  | ErrTooManyPartialSignatureMessages                | Reject         | For the committee role, it's allowed $min(2*V, V + $ SYNC_COMMITTEE_SIZE $)$ <br> where $V$ is the number of committee's validators.<br> For the aggregator committee role, it's allowed $min((1+4)*V, V + 4\times$ SYNC_COMMITTEE_SIZE $)$ <br> where $V$ is the number of committee's validators.<br> Else, only 1.                                 |
+| Triple validator index       | ErrTooManyEqualValidatorIndexInPartialSignatures                | Reject         | For the committee (resp. aggregator committee) role, a validator index can not be associated to more than 2 (resp. 5) signatures.                                                                                                                                                                                                                     |
 
 
 ```go
@@ -971,20 +966,20 @@ func (mv *MessageValidation) ValidatePartialSigMessagesByDutyLogic(peerID peer.I
 			}
 			type SSVMessage struct {
 				MsgType MsgType
-				MsgID   MessageID -> Must be assigned to duty if role is Proposal or Sync Committee Aggregator
+				MsgID   MessageID -> Must be assigned to duty if role is Proposal
 				Data 	[]byte
 			}
 			type PartialSignatureMessages struct {
 				Type     PartialSigMsgType -> Message count rules
 				Slot     phase0.Slot -> Must belong to allowed spread, Satisfies a maximum number of duties per epoch for role, Must not be "old"
-				Messages []*PartialSignatureMessage -> Valid number of signatures (3 cases: committee duty, sync committee contribution, others)
+				Messages []*PartialSignatureMessage -> Valid number of signatures (3 cases: committee duty, aggregator committee duty, others)
 			}
 
 			type PartialSignatureMessage struct {
 				PartialSignature Signature
 				SigningRoot      [32]byte
 				Signer         	 OperatorID
-				ValidatorIndex 	 phase0.ValidatorIndex -> Can't appear more than 2 times for role Committee
+				ValidatorIndex 	 phase0.ValidatorIndex -> Can't appear more than 2 (resp. 5) times for role Committee (resp. AggregatorCommittee)
 			}
 	*/
 
@@ -992,25 +987,25 @@ func (mv *MessageValidation) ValidatePartialSigMessagesByDutyLogic(peerID peer.I
 	var partialSignatureMessages types.PartialSignatureMessages
 	_ = partialSignatureMessages.Decode(signedSSVMessage.SSVMessage.Data)
 
+	msgRole := signedSSVMessage.SSVMessage.MsgID.GetRoleType()
 
 	// Rule: Height must not be "old". I.e., signer must not have already advanced to a later slot.
-	if signedSSVMessage.SSVMessage.MsgID.GetRoleType() != types.RoleCommittee { // Rule only for validator runners
+	if isCommitteeRole(msgRole) { // Rule only for validator runners
 		if !mv.MessageFromOldSlot(peerID, signedSSVMessage.SSVMessage.MsgID, partialSignatureMessages.Slot) {
 			return ErrSlotAlreadyAdvanced
 		}
 	}
 
 
-    // Rule: For proposal and sync committee aggregation duties, we check if the validator is assigned to it
-    if err := mv.ValidBeaconDuty(signedSSVMessage.SSVMessage.MsgID.GetSenderID(), signedSSVMessage.SSVMessage.MsgID.GetRoleType(), partialSignatureMessages.Slot); err != nil {
+    // Rule: For proposer duty, we check if the validator is assigned to it
+    if err := mv.ValidProposerDuty(signedSSVMessage.SSVMessage.MsgID.GetSenderID(), signedSSVMessage.SSVMessage.MsgID.GetRoleType(), partialSignatureMessages.Slot); err != nil {
 		return err
     }
 
 	// Rule: peer must send only:
 	// - 1 PostConsensusPartialSig, for Committee duty
 	// - 1 RandaoPartialSig and 1 PostConsensusPartialSig for Proposer
-	// - 1 SelectionProofPartialSig and 1 PostConsensusPartialSig for Aggregator
-	// - 1 SelectionProofPartialSig and 1 PostConsensusPartialSig for Sync committee contribution
+	// - 1 AggregatorCommitteePartialSig and 1 PostConsensusPartialSig for AggregatorCommittee
 	// - 1 ValidatorRegistrationPartialSig for Validator Registration
 	// - 1 VoluntaryExitPartialSig for Voluntary Exit
 	if err := mv.ValidPartialSigMessageCount(peerID, signedSSVMessage.SSVMessage.MsgID, &partialSignatureMessages); err != nil {
@@ -1018,7 +1013,7 @@ func (mv *MessageValidation) ValidatePartialSigMessagesByDutyLogic(peerID peer.I
 	}
 
 	// Rule: current slot must be between duty's starting slot and:
-	// - duty's starting slot + 34 (committee and aggregation)
+	// - duty's starting slot + 34 (committee and aggregator committee)
 	// - duty's starting slot + 3 (other duties)
 	if err := mv.ValidDutySlot(peerID, partialSignatureMessages.Slot, signedSSVMessage.SSVMessage.MsgID.GetRoleType()); err != nil {
 		// Err should be ErrEarlySlotMessage or ErrLateSlotMessage
@@ -1026,28 +1021,32 @@ func (mv *MessageValidation) ValidatePartialSigMessagesByDutyLogic(peerID peer.I
 	}
 
 	// Rule: valid number of duties per epoch:
-	// - 2 for aggregation, voluntary exit and validator registration
-	// - 2*V for Committee duty (where V is the number of validators in the cluster) (if no validator is doing sync committee in this epoch)
+	// - 2 for voluntary exit and validator registration
+	// - 2*V for Committee and AggregatorCommittee duty (where V is the number of validators in the cluster) (if no validator is doing sync committee in this epoch)
 	// - else, accept
 	if !mv.ValidNumberOfDutiesPerEpoch(peerID, signedSSVMessage.SSVMessage.MsgID, partialSignatureMessages.Slot) {
 		return ErrTooManyDutiesPerEpoch
 	}
 
-	if signedSSVMessage.SSVMessage.MsgID.GetRoleType() == types.RoleCommittee {
+	if isCommitteeRole(msgRole) {
+        
+		if msgRole == types.RoleCommmittee {
+            // Rule: The number of signatures must be <= min(2*V, V + SYNC_COMMITTEE_SIZE) where V is the number of validators assigned to the cluster
+            if !mv.ValidNumberOfSignaturesForCommitteeDuty(signedSSVMessage.SSVMessage.MsgID.GetSenderID(), &partialSignatureMessages) {
+                return ErrTooManyPartialSignatureMessages
+            }
+        }
+        
+		if msgRole == types.RoleAggregatorCommittee {
+            // Rule: The number of signatures must be <= min(5*V, V + 4*SYNC_COMMITTEE_SIZE) where V is the number of validators assigned to the cluster
+            if !mv.ValidNumberOfSignaturesForAggregatorCommitteeDuty(signedSSVMessage.SSVMessage.MsgID.GetSenderID(), &partialSignatureMessages) {
+                return ErrTooManyPartialSignatureMessages
+            }
+        }
 
-		// Rule: The number of signatures must be <= min(2*V, V + SYNC_COMMITTEE_SIZE) where V is the number of validators assigned to the cluster
-		if !mv.ValidNumberOfSignaturesForCommitteeDuty(signedSSVMessage.SSVMessage.MsgID.GetSenderID(), &partialSignatureMessages) {
-			return ErrTooManyPartialSignatureMessages
-		}
-
-		// Rule: a ValidatorIndex can't appear more than 2 times in the []*PartialSignatureMessage list
-		if !mv.NoTripleValidatorOccurrence(&partialSignatureMessages) {
-			return ErrTripleValidatorIndexInPartialSignatures
-		}
-	} else if signedSSVMessage.SSVMessage.MsgID.GetRoleType() == types.RoleSyncCommitteeContribution {
-		// Rule: The number of signatures must be <= MaxSignaturesInSyncCommitteeContribution for the sync comittee contribution duty
-		if len(partialSignatureMessages.Messages) > MaxSignaturesInSyncCommitteeContribution {
-			return ErrTooManyPartialSignatureMessages
+		// Rule: a ValidatorIndex can't appear more than 2 (resp. 5) times in the []*PartialSignatureMessage list for role Committee (resp. AggregatorCommittee)
+		if !mv.TooManyEqualValidatorOccurrence(&partialSignatureMessages, msgRole) {
+			return ErrTooManyEqualValidatorIndexInPartialSignatures
 		}
 	} else {
 		// Rule: The number of signatures must be 1 for the other types of duties
