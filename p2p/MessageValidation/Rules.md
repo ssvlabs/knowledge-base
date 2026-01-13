@@ -118,15 +118,15 @@ var (
 	ErrUnexpectedPrepareJustifications 	   = Error{text: "message has a prepare justification but it's not a proposal", reject: true}
 
 
-	ErrPartialSigOneSigner              		= Error{text: "partial signature message with len(signers) != 1", reject: true}
-	ErrTooManyPartialSignatureMessages  		= Error{text: "too many signatures for cluster in partial signature message"}
-	ErrTooManyEqualValidatorIndexInPartialSignatures  = Error{text: "validator index appear 3 times in partial signature message", reject: true}
-	ErrNoPartialSignatureMessages       		= Error{text: "no partial signature messages", reject: true}
-	ErrInconsistentSigners              		= Error{text: "inconsistent signers", reject: true}
-	ErrValidatorIndexMismatch           		= Error{text: "validator index mismatch"}
-	ErrInvalidPartialSignatureType      		= Error{text: "invalid partial signature type", reject: true}
-	ErrPartialSignatureTypeRoleMismatch 		= Error{text: "partial signature type and role don't match", reject: true}
-	ErrInvalidPartialSignatureTypeCount 		= Error{text: "sent more partial signature messages of a certain type than allowed", reject: true}
+	ErrPartialSigOneSigner              		        = Error{text: "partial signature message with len(signers) != 1", reject: true}
+	ErrTooManyPartialSignatureMessages  		        = Error{text: "too many signatures for cluster in partial signature message"}
+    ErrTooManyEqualValidatorIndicesInPartialSignatures  = Error{text: "validator index appears too many times in partial signature message", reject: true}
+	ErrNoPartialSignatureMessages       		        = Error{text: "no partial signature messages", reject: true}
+	ErrInconsistentSigners              		        = Error{text: "inconsistent signers", reject: true}
+	ErrValidatorIndexMismatch           		        = Error{text: "validator index mismatch"}
+	ErrInvalidPartialSignatureType      		        = Error{text: "invalid partial signature type", reject: true}
+	ErrPartialSignatureTypeRoleMismatch 		        = Error{text: "partial signature type and role don't match", reject: true}
+	ErrInvalidPartialSignatureTypeCount 		        = Error{text: "sent more partial signature messages of a certain type than allowed", reject: true}
 
 	ErrTooManyDutiesPerEpoch = Error{text: "too many duties per epoch"}
 	ErrNoDuty                = Error{text: "no duty for this epoch"}
@@ -140,13 +140,13 @@ The main structure is the `MessageValidation` structure which has a `ValidatePub
 ```go
 
 const (
-	MaxMsgSize                               = 9114816
-	maxConsensusMsgSize                      = 722480
-	maxPartialSignatureMsgSize               = 727000
+	MaxMsgSize                               = 9114816 // Source: https://github.com/ssvlabs/ssv-spec/blob/a65134ed45c932588c17d421173923f0216c6c73/types/spectest/tests/maxmsgsize/max_signed_ssv_message.go#L11
+	maxConsensusMsgSize                      = 722480 // Source: https://github.com/ssvlabs/ssv-spec/blob/a65134ed45c932588c17d421173923f0216c6c73/types/spectest/tests/maxmsgsize/max_ssv_message.go#L9
+	maxPartialSignatureMsgSize               = 727000 // Source: https://github.com/ssvlabs/ssv-spec/blob/a65134ed45c932588c17d421173923f0216c6c73/types/spectest/tests/maxmsgsize/max_ssv_message.go#L10 
 	maxSSVMessageDataSize                    = max(maxConsensusMsgSize, maxPartialSignatureMsgSize)
-	PartialSignatureSize                     = 48
-	MessageSignatureSize                     = 256
-	SyncCommitteeSize                        = 512
+	PartialSignatureSize                     = 96  // Source: https://github.com/ssvlabs/ssv-spec/blob/a65134ed45c932588c17d421173923f0216c6c73/types/partial_sig_message.go#L80 and https://eth2book.info/latest/part2/building_blocks/signatures/#signing 
+	MessageSignatureSize                     = 256 // Source: https://github.com/ssvlabs/ssv-spec/blob/a65134ed45c932588c17d421173923f0216c6c73/types/messages.go#L128
+	SyncCommitteeSize                        = 512 // Source: https://github.com/ethereum/consensus-specs/blob/master/specs/altair/beacon-chain.md#sync-committee
 )
 
 type MessageValidation struct {
@@ -940,15 +940,15 @@ func (mv *MessageValidation) ValidatePartialSignatureMessageSemantics(peerID pee
 
 #### Duty Logic
 
-|         Verification         |          Error           | Classification | Explanation                                                                                                                                                                                                                                                                                                                                           |
-| ---------------------------- | ------------------------ | -------------- |-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Already advanced slot        | ErrSlotAlreadyAdvanced   | Ignore         | (Non-committee roles) Signer already advanced to later slot.                                                                                                                                                                                                                                                                                          |
-| No beacon duty               | ErrNoDuty                | Ignore         | If Proposal duty, check if duty exists with beacon node.                                                                                                                                                                                                                                                                                              |
-| Invalid signature type count | ErrInvalidPartialSignatureTypeCount                | Reject         | It's allow only:<br> 1 PostConsensusPartialSig, for Committee duty,<br> 1 RandaoPartialSig and 1 PostConsensusPartialSig for Proposer,<br> 1 AggregatorCommitteePartialSig and 1 PostConsensusPartialSig for AggregatorCommittee,<br> 1 ValidatorRegistrationPartialSig for Validator Registration,<br> 1 VoluntaryExitPartialSig for Voluntary Exit. |
-| Slot not in time for role    | ErrEarlySlotMessage or ErrLateSlotMessage         | Ignore         | Current time must be between duty's starting time and<br> +34 (committee and aggregator committee) or +3 (else) slots.                                                                                                                                                                                                                                |
-| Too many duties per epoch    | ErrTooManyDutiesPerEpoch | Ignore         | If role is either aggregator, voluntary exit and validator registration,<br> it's allowed 2 duties per epoch. Else if committee or aggregator committee,<br> 2*V (if no validator is doing sync committee).<br> Else accept.                                                                                                                          |
-| Too many partial signatures  | ErrTooManyPartialSignatureMessages                | Reject         | For the committee role, it's allowed $min(2*V, V + $ SYNC_COMMITTEE_SIZE $)$ <br> where $V$ is the number of committee's validators.<br> For the aggregator committee role, it's allowed $min((1+4)*V, V + 4\times$ SYNC_COMMITTEE_SIZE $)$ <br> where $V$ is the number of committee's validators.<br> Else, only 1.                                 |
-| Too many equal validator indices       | ErrTooManyEqualValidatorIndexInPartialSignatures | Reject         | A validator index can not be associated with more than 2 signatures for the committee role and more than 5 for the aggregator committee role.                                                                                                                                                                                                                     |
+| Verification                     | Error                                              | Classification | Explanation                                                                                                                                                                                                                                                                                                                                         |
+|----------------------------------|----------------------------------------------------| -------------- |-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Already advanced slot            | ErrSlotAlreadyAdvanced                             | Ignore         | (Non-committee roles) Signer already advanced to later slot.                                                                                                                                                                                                                                                                                        |
+| No beacon duty                   | ErrNoDuty                                          | Ignore         | If Proposal duty, check if duty exists with beacon node.                                                                                                                                                                                                                                                                                            |
+| Invalid signature type count     | ErrInvalidPartialSignatureTypeCount                | Reject         | It allows only:<br> 1 PostConsensusPartialSig, for Committee duty,<br> 1 RandaoPartialSig and 1 PostConsensusPartialSig for Proposer,<br> 1 AggregatorCommitteePartialSig and 1 PostConsensusPartialSig for AggregatorCommittee,<br> 1 ValidatorRegistrationPartialSig for Validator Registration,<br> 1 VoluntaryExitPartialSig for Voluntary Exit.|
+| Slot not in time for role        | ErrEarlySlotMessage or ErrLateSlotMessage          | Ignore         | Current time must be between duty's starting time and<br> +34 (committee and aggregator committee) or +3 (else) slots.                                                                                                                                                                                                                              |
+| Too many duties per epoch        | ErrTooManyDutiesPerEpoch                           | Ignore         | If role is either aggregator, voluntary exit and validator registration,<br> it's allowed 2 duties per epoch. Else if committee or aggregator committee,<br> 2*V (if no validator is doing sync committee).<br> Else accept.                                                                                                                        |
+| Too many partial signatures      | ErrTooManyPartialSignatureMessages                 | Reject         | For the committee role, it's allowed $min(2*V, V + $ SYNC_COMMITTEE_SIZE $)$ <br> where $V$ is the number of committee's validators.<br> For the aggregator committee role, it's allowed $min((1+4)*V, V + 4 \times$ SYNC_COMMITTEE_SIZE $)$ <br> where $V$ is the number of committee's validators.<br> Else, only 1.                              |
+| Too many equal validator indices | ErrTooManyEqualValidatorIndicesInPartialSignatures | Reject         | A validator index can not be associated with more than 2 signatures for the committee role and more than 5 for the aggregator committee role.                                                                                                                                                                                                       |
 
 
 ```go
@@ -1046,7 +1046,7 @@ func (mv *MessageValidation) ValidatePartialSigMessagesByDutyLogic(peerID peer.I
 
 		// Rule: a ValidatorIndex can't appear more than 2 (resp. 5) times in the []*PartialSignatureMessage list for role Committee (resp. AggregatorCommittee)
 		if mv.TooManyEqualValidatorOccurrence(&partialSignatureMessages, msgRole) {
-			return ErrTooManyEqualValidatorIndexInPartialSignatures
+			return ErrTooManyEqualValidatorIndicesInPartialSignatures
 		}
 	} else {
 		// Rule: The number of signatures must be 1 for the other types of duties
