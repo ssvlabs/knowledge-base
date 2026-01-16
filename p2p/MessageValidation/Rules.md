@@ -120,7 +120,7 @@ var (
 
 	ErrPartialSigOneSigner              		        = Error{text: "partial signature message with len(signers) != 1", reject: true}
 	ErrTooManyPartialSignatureMessages  		        = Error{text: "too many signatures for cluster in partial signature message"}
-    ErrTooManyEqualValidatorIndicesInPartialSignatures  = Error{text: "validator index appears too many times in partial signature message", reject: true}
+	ErrTooManyEqualValidatorIndicesInPartialSignatures  = Error{text: "validator index appears too many times in partial signature message", reject: true}
 	ErrNoPartialSignatureMessages       		        = Error{text: "no partial signature messages", reject: true}
 	ErrInconsistentSigners              		        = Error{text: "inconsistent signers", reject: true}
 	ErrValidatorIndexMismatch           		        = Error{text: "validator index mismatch"}
@@ -136,6 +136,16 @@ var (
 ### The main structure, function and constant values
 
 The main structure is the `MessageValidation` structure which has a `ValidatePubsubMessage` function to serve as a handle for the GossipSub extended validator.
+
+The function calls `ValidateMessage` which recursively calls every validation chain: Syntax -> Semantics -> QBFT Semantics | Partial Signature Semantics -> QBFT Logic -> Duty Rules.
+All rules are verified against the peer-specific state, and after it:
+- If there's any error, the appropriate `Ignore` or `Reject` is returned.
+- Else, the message is again validated but this time against the global shared state.
+This prevents the node from propagating duplicated messages. Then:
+  - In case there's any error, `Ignore` is returned (even if the triggered rule has `reject: true`) as we can't blame the peer for the error.
+  - Else, `Accept` is returned.
+
+More about the global shared state validation is discussed [below](#global-shared-state-validations).
 
 ```go
 
@@ -175,25 +185,33 @@ func (mv *MessageValidation) Validate(_ context.Context, _ peer.ID, pmsg *pubsub
 
 	// Check error
 	if err != nil {
-
-		var valErr Error
-		if errors.As(err, &valErr) {
-			// Update state
-			peerState.OnError(valErr)
-
-			if valErr.Reject() {
-				// Reject
-				return pubsub.ValidationReject
-			} else {
-				// Ignore
-				return pubsub.ValidationIgnore
-			}
-		} else {
-			panic(err)
-		}
+		return GetPubSubValidatoinResult(peerState, err)
 	} else {
+		// If the message is successful after all rules are tested on the peer-specific state,
+		// test it as well on the global shared state to avoid propagating duplicated
+		err = mv.ValidateAgainstGlobalSharedState(pmsg)
+		if err != nil {
+			return pubsub.ValidationIgnore
+        }
 		return pubsub.ValidationAccept
 	}
+}
+
+func GetPubSubValidatoinResult(peerState *PeerState, err error) pubsub.ValidationResult {
+    var valErr Error
+    if errors.As(err, &valErr) {
+        // Update state
+        peerState.OnError(valErr)
+        if valErr.Reject() {
+            // Reject
+            return pubsub.ValidationReject
+        } else {
+            // Ignore
+            return pubsub.ValidationIgnore
+        }
+    } else {
+        panic(err)
+    }
 }
 
 func (mv *MessageValidation) VerifyMessageSignature(pmsg *pubsub.Message) error {
@@ -1063,6 +1081,64 @@ func (mv *MessageValidation) ValidatePartialSigMessagesByDutyLogic(peerID peer.I
 ### Observations
 
 - Proposal and round-change justifications were not included because they are too complex to implement at the message validation level. The cost of adding this complexity is not justified since the message count check already prevents any related attack.
+
+### Global Shared State Validations
+
+At first, the message is checked for all rules against a peer-specific state.
+This is important for penalizing a peer **solely** due to its current and past activities,
+making it impossible for one peer to maliciously manipulate the state in order to penalize another.
+
+Still, this doesn't prevent the node itself from commiting a violation.
+Note the following example:
+
+![Covert Attack](images/covert_attack.png)
+
+This image illustrates the *Covert Attack*, in which a peer malicious sends two "logically duplicated" messages
+(for example, `Prepare(data=1)` and `Prepare(data=2)` created by the same operator, for the same duty, and for the same QBFT round),
+one to peer A and another to peer B.
+Even though peer C is receiving a conflicting message, the usage of peer-specific state allows peer C not to penalize A and B
+(which is correct since they are not violating the protocol).
+Still, if peer C accepts both messages, it would end up sending conflicting messages and
+would be penalized by a later peer for duplication.
+
+To prevent this, every peer will store a *global shared state* that represents its view of the network,
+reflecting updates from any accepted message it receives from any peer.
+After a message is accepted against peer-specific state checks,
+it's checked again for all rules but against the global shared state.
+
+Most importantly, note that such a global shared state is exactly what others should understand as this peer's specific-state
+(i.e. `A.global_shared_state == B.peer_specific_state[A]` for any A and B with appropriate synchronization).
+Thus, if the message is accepted against such a state, other peers will also accept it.
+
+In case a rule is triggered during the global shared state validation,
+the message should be strictly **ignored** (even if it's a rejection rule).
+That's in accordance with the fact that the peer shouldn't be penalized
+due to a state it can't control.
+Else, if all rules are successful, the message is accepted.
+
+In the [code snippet](#the-main-structure-function-and-constant-values) above, `mv.ValidateAgainstGlobalSharedState(pmsg)` should
+call again all message validation rules but should use the global shared state instead of the peer-specific one.
+
+```mermaid
+flowchart LR
+    A[Receive message from peer]
+    B[Rules validation with peer-specific state]
+    C{Any rule triggered?}
+    D[Reject/ignore message according to the rule]
+    E[Rules validation with shared state validation]
+    F{Any rule triggered?}
+    G[Ignore]
+    H[Accept]
+
+    A --> B
+    B --> C
+    C -- Yes --> D
+    C -- No --> E
+    E --> F
+    F -- Yes --> G
+    F -- No --> H
+```
+
 
 
 ### Rules suggestions for future
