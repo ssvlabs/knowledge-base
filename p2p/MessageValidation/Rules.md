@@ -797,7 +797,7 @@ func (mv *MessageValidation) ValidateQBFTMessageByDutyLogic(peerID peer.ID, sign
     }
 
 	// Rule: current slot(height) must be between duty's starting slot and:
-	// - duty's starting slot + 34 (committee and aggregation)
+	// - duty's starting slot + 34 (committee and aggregator committee)
 	// - duty's starting slot + 3 (other types)
 	if err != mv.ValidDutySlot(peerID, phase0.Slot(qbftMessage.Height), signedSSVMessage.SSVMessage.MsgID.GetRoleType()); err != nil {
 		// Err should be ErrEarlySlotMessage or ErrLateSlotMessage
@@ -806,7 +806,7 @@ func (mv *MessageValidation) ValidateQBFTMessageByDutyLogic(peerID peer.ID, sign
 
 	// Rule: valid number of duties per epoch:
 	// - 2 for voluntary exit and validator registration
-	// - 2*V for Committee and Aggregator Committee duty (where V is the number of validators in the cluster) (if no validator is doing sync committee in this epoch)
+	// - 2*V for committee and aggregator committee duty (where V is the number of validators in the cluster) (if no validator is doing sync committee in this epoch)
 	// - else, accept
 	if !mv.ValidNumberOfDutiesPerEpoch(peerID, signedSSVMessage.SSVMessage.MsgID, phase0.Slot(qbftMessage.Height)) {
 		return ErrTooManyDutiesPerEpoch
