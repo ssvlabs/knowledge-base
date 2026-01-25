@@ -142,9 +142,9 @@ The main structure is the `MessageValidation` structure which has a `ValidatePub
 const (
 	MaxMsgSize                               = 9114816 // Source: https://github.com/ssvlabs/ssv-spec/blob/a65134ed45c932588c17d421173923f0216c6c73/types/spectest/tests/maxmsgsize/max_signed_ssv_message.go#L11
 	maxConsensusMsgSize                      = 722480 // Source: https://github.com/ssvlabs/ssv-spec/blob/a65134ed45c932588c17d421173923f0216c6c73/types/spectest/tests/maxmsgsize/max_ssv_message.go#L9
-	maxPartialSignatureMsgSize               = 727000 // Source: https://github.com/ssvlabs/ssv-spec/blob/a65134ed45c932588c17d421173923f0216c6c73/types/spectest/tests/maxmsgsize/max_ssv_message.go#L10 
+	maxPartialSignatureMsgSize               = 727000 // Source: https://github.com/ssvlabs/ssv-spec/blob/a65134ed45c932588c17d421173923f0216c6c73/types/spectest/tests/maxmsgsize/max_ssv_message.go#L10
 	maxSSVMessageDataSize                    = max(maxConsensusMsgSize, maxPartialSignatureMsgSize)
-	PartialSignatureSize                     = 96  // Source: https://github.com/ssvlabs/ssv-spec/blob/a65134ed45c932588c17d421173923f0216c6c73/types/partial_sig_message.go#L80 and https://eth2book.info/latest/part2/building_blocks/signatures/#signing 
+	PartialSignatureSize                     = 96  // Source: https://github.com/ssvlabs/ssv-spec/blob/a65134ed45c932588c17d421173923f0216c6c73/types/partial_sig_message.go#L80 and https://eth2book.info/latest/part2/building_blocks/signatures/#signing
 	MessageSignatureSize                     = 256 // Source: https://github.com/ssvlabs/ssv-spec/blob/a65134ed45c932588c17d421173923f0216c6c73/types/messages.go#L128
 	SyncCommitteeSize                        = 512 // Source: https://github.com/ethereum/consensus-specs/blob/master/specs/altair/beacon-chain.md#sync-committee
 )
@@ -1029,14 +1029,14 @@ func (mv *MessageValidation) ValidatePartialSigMessagesByDutyLogic(peerID peer.I
 	}
 
 	if isCommitteeRole(msgRole) {
-        
+
 		if msgRole == types.RoleCommittee {
             // Rule: The number of signatures must be <= min(2*V, V + SYNC_COMMITTEE_SIZE) where V is the number of validators assigned to the cluster
             if !mv.ValidNumberOfSignaturesForCommitteeDuty(signedSSVMessage.SSVMessage.MsgID.GetSenderID(), &partialSignatureMessages) {
                 return ErrTooManyPartialSignatureMessages
             }
         }
-        
+
 		if msgRole == types.RoleAggregatorCommittee {
             // Rule: The number of signatures must be <= min(5*V, V + 4*SYNC_COMMITTEE_SIZE) where V is the number of validators assigned to the cluster
             if !mv.ValidNumberOfSignaturesForAggregatorCommitteeDuty(signedSSVMessage.SSVMessage.MsgID.GetSenderID(), &partialSignatureMessages) {
