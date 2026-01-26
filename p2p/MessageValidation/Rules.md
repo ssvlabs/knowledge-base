@@ -1084,60 +1084,57 @@ func (mv *MessageValidation) ValidatePartialSigMessagesByDutyLogic(peerID peer.I
 
 ### Global Shared State Validations
 
-At first, the message is checked for all rules against a peer-specific state.
-This is important for penalizing a peer **solely** due to its current and past activities,
-making it impossible for one peer to maliciously manipulate the state in order to penalize another.
+All message validation procedures MUST follow the order and outcome-directed handling below, using RFC 2119 conventions for requirement levels.
 
-Still, this doesn't prevent the node itself from commiting a violation.
-Note the following example:
+**1. Global Shared State Validation**
+
+Upon receipt of a message, the node MUST first validate the message against all protocol rules using the *global shared state*. This state reflects an aggregate view of all messages accepted by the node, regardless of which peer sent them.
+
+- If the message passes all rules in the global shared state, the node MUST proceed to accept the message.
+- If any rule is triggered during global shared state validation:
+    - If the corresponding rule may later result in rejection when applied to peer-specific state (i.e., is classified as REJECT in this document), the node MUST proceed to validate the message against *peer-specific state* for this peer:
+        - If the message fails the peer-specific check for this rule, the node MUST REJECT the message according to the rule's classification.
+        - If the message passes the peer-specific check but failed the global check, the node MUST IGNORE the message. This ensures the peer is not penalized for a condition it cannot control.
+    - If the rule is not a REJECT rule, the node MUST IGNORE the message.
+
+**2. Peer-Specific State Validation**
+
+For completeness, prior to any global state check, messages MAY be initially checked against peer-specific state for any checks directly related to penalizing peer misbehavior relative to their historical activity. Peer-specific checks MUST only result in penalization or rejection if the message definitively violates protocol rules in the context of that peer’s known state.
+
+**Rationale and Security Considerations**
+
+This approach is required to prevent scenarios such as the *Covert Attack*, illustrated below, where malicious actors distribute logically conflicting messages to different peers to avoid immediate penalization, while still causing protocol violations affecting a node’s global state.
 
 ![Covert Attack](images/covert_attack.png)
 
-This image illustrates the *Covert Attack*, in which a peer malicious sends two "logically duplicated" messages
-(for example, `Prepare(data=1)` and `Prepare(data=2)` created by the same operator, for the same duty, and for the same QBFT round),
-one to peer A and another to peer B.
-Even though peer C is receiving a conflicting message, the usage of peer-specific state allows peer C not to penalize A and B
-(which is correct since they are not violating the protocol).
-Still, if peer C accepts both messages, it would end up sending conflicting messages and
-would be penalized by a later peer for duplication.
+**Correctness**: The global shared state is intended to reflect what other peers would understand as any given node’s state (i.e., `A.global_shared_state == B.peer_specific_state[A]`, assuming synchronization). By enforcing global state checks first, nodes avoid creating and propagating protocol-violating conditions, even in the face of asymmetric message delivery.
 
-To prevent this, every peer will store a *global shared state* that represents its view of the network,
-reflecting updates from any accepted message it receives from any peer.
-After a message is accepted against peer-specific state checks,
-it's checked again for all rules but against the global shared state.
-
-Most importantly, note that such a global shared state is exactly what others should understand as this peer's specific-state
-(i.e. `A.global_shared_state == B.peer_specific_state[A]` for any A and B with appropriate synchronization).
-Thus, if the message is accepted against such a state, other peers will also accept it.
-
-In case a rule is triggered during the global shared state validation,
-the message should be strictly **ignored** (even if it's a rejection rule).
-That's in accordance with the fact that the peer shouldn't be penalized
-due to a state it can't control.
-Else, if all rules are successful, the message is accepted.
-
-In the [code snippet](#the-main-structure-function-and-constant-values) above, `mv.ValidateAgainstGlobalSharedState(pmsg)` should
-call again all message validation rules but should use the global shared state instead of the peer-specific one.
+**Pseudocode Summary**:
 
 ```mermaid
 flowchart LR
     A[Receive message from peer]
-    B[Rules validation with peer-specific state]
+    B[Rules validation with global shared state]
     C{Any rule triggered?}
-    D[Reject/ignore message according to the rule]
-    E[Rules validation with shared state validation]
-    F{Any rule triggered?}
-    G[Ignore]
-    H[Accept]
+    D[Is rule 'reject'-typed?]
+    D2[Peer-specific check for this rule]
+    E[Reject message]
+    F[Ignore message]
+    G[Accept message]
 
     A --> B
     B --> C
+    C -- No --> G
     C -- Yes --> D
-    C -- No --> E
-    E --> F
-    F -- Yes --> G
-    F -- No --> H
+    D -- Yes --> D2
+    D2 -- Fail --> E
+    D2 -- Pass --> F
+    D -- No --> F
 ```
+
+**Summary**: The node MUST apply all rule checks first to the global shared state. For any rule that, if violated in peer-specific state, would cause rejection, a secondary peer-specific check MUST be performed. If the message fails that peer-specific check, it MUST be REJECTED. If it passes the peer-specific check but still violates the rule globally, the message MUST be IGNORED. If it passes all checks globally, it MUST be ACCEPTED.
+
+This flow strictly prevents penalization of peers for state they do not control, while ensuring the node does not violate protocol integrity due to global state inconsistencies.
 
 
 
