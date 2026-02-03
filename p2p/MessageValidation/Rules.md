@@ -1082,50 +1082,31 @@ func (mv *MessageValidation) ValidatePartialSigMessagesByDutyLogic(peerID peer.I
 
 - Proposal and round-change justifications were not included because they are too complex to implement at the message validation level. The cost of adding this complexity is not justified since the message count check already prevents any related attack.
 
-### Global Shared State Validations
+### Global Shared State Validation
 
-At first, the message is checked for all rules against a peer-specific state.
-This is important for penalizing a peer **solely** due to its current and past activities,
-making it impossible for one peer to maliciously manipulate the state in order to penalize another.
+When processing an incoming message, an implementation MUST first validate the message against all rules using the peer-specific state. This ensures that penalty and enforcement actions are based solely on the behavior and historical actions of the sending peer, thereby preventing any peer from manipulating the system to unfairly penalize other participants.
 
-Still, this doesn't prevent the node itself from commiting a violation.
-Note the following example:
+However, peer-specific validation alone does not preclude the local node from violating protocol constraints itself, for instance in scenarios such as the following:
 
 ![Covert Attack](images/covert_attack.png)
 
-This image illustrates the *Covert Attack*, in which a peer malicious sends two "logically duplicated" messages
-(for example, `Prepare(data=1)` and `Prepare(data=2)` created by the same operator, for the same duty, and for the same QBFT round),
-one to peer A and another to peer B.
-Even though peer C is receiving a conflicting message, the usage of peer-specific state allows peer C not to penalize A and B
-(which is correct since they are not violating the protocol).
-Still, if peer C accepts both messages, it would end up sending conflicting messages and
-would be penalized by a later peer for duplication.
+In this "Covert Attack" scenario, a malicious peer transmits two logically duplicated messages (e.g., `Prepare(data=1)` and `Prepare(data=2)` for the same duty and QBFT round, both signed by the same operator) to two different peers (A and B). Peer C may then receive conflicting messages without either A or B being in violation, since their independent histories would not indicate double signing. Nevertheless, if peer C were to accept both messages, it would be at risk of subsequently producing conflicting behavior and thus receiving penalties for duplication from others.
 
-To prevent this, every peer will store a *global shared state* that represents its view of the network,
-reflecting updates from any accepted message it receives from any peer.
-After a message is accepted against peer-specific state checks,
-it's checked again for all rules but against the global shared state.
+To mitigate this class of attack and ensure protocol correctness, each node MUST maintain a *global shared state* that summarizes the node's total, network-derived view of accepted messages. This state MUST be updated following the acceptance of any message, regardless of origin peer. After a message passes all peer-specific state validations, the implementation MUST re-validate the message against all rules using the global shared state.
 
-Most importantly, note that such a global shared state is exactly what others should understand as this peer's specific-state
-(i.e. `A.global_shared_state == B.peer_specific_state[A]` for any A and B with appropriate synchronization).
-Thus, if the message is accepted against such a state, other peers will also accept it.
+Crucially, a node's global shared state SHOULD be comparable to the peer-specific state that other peers maintain for that node (i.e., for appropriate synchronization, `A.global_shared_state` SHOULD equal `B.peer_specific_state[A]` for any peers A and B). Acceptance of a message against this state ensures other correctly-behaving peers will also accept the same message.
 
-In case a rule is triggered during the global shared state validation,
-the message should be strictly **ignored** (even if it's a rejection rule).
-That's in accordance with the fact that the peer shouldn't be penalized
-due to a state it can't control.
-Else, if all rules are successful, the message is accepted.
+If any rule is triggered during the global shared state validation, the implementation MUST strictly ignore the message (even if peer-specific rules would otherwise demand an explicit rejection). This aligns with the protocol's requirement that a peer MUST NOT be penalized for actions or state outside its own control. Only if the message passes both sets of validation checks (peer-specific and shared/global) MAY it be processed further and accepted by the application.
 
-In the [code snippet](#the-main-structure-function-and-constant-values) above, `mv.ValidateAgainstGlobalSharedState(pmsg)` should
-call again all message validation rules but should use the global shared state instead of the peer-specific one.
+In practical terms, as seen in the [code example](#the-main-structure-function-and-constant-values), a function such as `mv.ValidateAgainstGlobalSharedState(pmsg)` MUST perform a complete revalidation of the message using the global shared state as the reference.
 
 ```mermaid
 flowchart LR
     A[Receive message from peer]
-    B[Rules validation with peer-specific state]
+    B[Validate with peer-specific state]
     C{Any rule triggered?}
-    D[Reject/ignore message according to the rule]
-    E[Rules validation with shared state validation]
+    D[Reject/Ignore as per rule]
+    E[Validate with global shared state]
     F{Any rule triggered?}
     G[Ignore]
     H[Accept]
@@ -1138,7 +1119,6 @@ flowchart LR
     F -- Yes --> G
     F -- No --> H
 ```
-
 
 
 ### Rules suggestions for future
