@@ -947,7 +947,7 @@ func (mv *MessageValidation) ValidatePartialSignatureMessageSemantics(peerID pee
 | Invalid signature type count     | ErrInvalidPartialSignatureTypeCount                | Reject         | It allows only:<br> 1 PostConsensusPartialSig, for Committee duty,<br> 1 RandaoPartialSig and 1 PostConsensusPartialSig for Proposer,<br> 1 AggregatorCommitteePartialSig and 1 PostConsensusPartialSig for AggregatorCommittee,<br> 1 ValidatorRegistrationPartialSig for Validator Registration,<br> 1 VoluntaryExitPartialSig for Voluntary Exit.|
 | Slot not in time for role        | ErrEarlySlotMessage or ErrLateSlotMessage          | Ignore         | Current time must be between duty's starting time and<br> +34 (committee and aggregator committee) or +3 (else) slots.                                                                                                                                                                                                                              |
 | Too many duties per epoch        | ErrTooManyDutiesPerEpoch                           | Ignore         | If role is either aggregator, voluntary exit and validator registration,<br> it's allowed 2 duties per epoch. Else if committee or aggregator committee,<br> 2*V (if no validator is doing sync committee).<br> Else accept.                                                                                                                        |
-| Too many partial signatures      | ErrTooManyPartialSignatureMessages                 | Reject         | For the committee role, it's allowed $min(2*V, V + $ SYNC_COMMITTEE_SIZE $)$ <br> where $V$ is the number of committee's validators.<br> For the aggregator committee role, it's allowed $min((1+4)*V, V + 4 \times$ SYNC_COMMITTEE_SIZE $)$ <br> where $V$ is the number of committee's validators.<br> Else, only 1.                              |
+| Too many partial signatures      | ErrTooManyPartialSignatureMessages                 | Reject         | For the committee role, it's allowed $min(2*V, V + $ SYNC_COMMITTEE_SIZE $)$ <br> where $V$ is the number of committee's validators.<br> For the aggregator committee role, it's allowed $min((1+4)*V, V + 4 \times$ SYNC_COMMITTEE_SIZE $)$.<br> Else, only 1.                              |
 | Too many equal validator indices | ErrTooManyEqualValidatorIndicesInPartialSignatures | Reject         | A validator index can not be associated with more than 2 signatures for the committee role and more than 5 for the aggregator committee role.                                                                                                                                                                                                       |
 
 
@@ -972,7 +972,10 @@ func (mv *MessageValidation) ValidatePartialSigMessagesByDutyLogic(peerID peer.I
 			type PartialSignatureMessages struct {
 				Type     PartialSigMsgType -> Message count rules
 				Slot     phase0.Slot -> Must belong to allowed spread, Satisfies a maximum number of duties per epoch for role, Must not be "old"
-				Messages []*PartialSignatureMessage -> Valid number of signatures (3 cases: committee duty, aggregator committee duty, others)
+				Messages []*PartialSignatureMessage -> Valid number of signatures. 3 cases:
+						- min(2*V, V + SYNC_COMMITTEE_SIZE) for committee duty
+						- min((1+4)*V, V + 4 * SYNC_COMMITTEE_SIZE) for aggregator committee duty
+						- 1 for other duty types
 			}
 
 			type PartialSignatureMessage struct {
