@@ -1,5 +1,8 @@
 # Estimation of amount of messages received
 
+> [!WARNING]
+> This document is deprecated due to protocol changes as of the Alan and Boole forks.
+
 To play with the below formulas, follow this [google sheet link](https://docs.google.com/spreadsheets/d/1TpXnVFzF4eGiQarXuPBrOIU4tJXhzOHav9PkGve3_Qc/edit?usp=sharing).
 
 ## Probability of having a duty per slot
