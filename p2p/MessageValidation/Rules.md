@@ -185,7 +185,7 @@ func (mv *MessageValidation) Validate(_ context.Context, _ peer.ID, pmsg *pubsub
 
 	// Check error
 	if err != nil {
-		return GetPubSubValidatoinResult(peerState, err)
+		return GetPubSubValidationResult(peerState, err)
 	} else {
 		// If the message is successful after all rules are tested on the peer-specific state,
 		// test it as well on the global shared state to avoid propagating duplicated
@@ -197,7 +197,7 @@ func (mv *MessageValidation) Validate(_ context.Context, _ peer.ID, pmsg *pubsub
 	}
 }
 
-func GetPubSubValidatoinResult(peerState *PeerState, err error) pubsub.ValidationResult {
+func GetPubSubValidationResult(peerState *PeerState, err error) pubsub.ValidationResult {
     var valErr Error
     if errors.As(err, &valErr) {
         // Update state
